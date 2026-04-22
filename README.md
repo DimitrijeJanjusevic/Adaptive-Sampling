@@ -228,7 +228,6 @@ MQTT publish OK
    Data reduction: 93.00%
 
 3. END-TO-END LATENCY
-   Average: 2656.09 ms
    Minimum: 41.97 ms
    Maximum: 14728.34 ms
 
