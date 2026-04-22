@@ -70,6 +70,7 @@ Two static buffers prevent data copying:
 - Sampling Task fills one buffer while Processing Task reads the other
 - Only buffer IDs are passed through queues (zero-copy)
 - Mutex protects buffer status changes
+- Yield function
 
 ---
 
@@ -318,22 +319,3 @@ Average current = (100 mA × 0.0001s + 1 mA × 0.0799s) / 0.08s = 1.12 mA
 4. **64-bit Timestamps**: Prevent wraparound for long-duration runs
 5. **Physical Sensor Integration**: Replace synthetic signal with actual ADC readings
 6. **Current Measurement**: Add external current monitoring for true energy validation
-
-### Practical Power Optimization Strategy
-
-For a battery-powered IoT device:
-
-| Strategy | Estimated Current | Implementation Status |
-|----------|------------------|----------------------|
-| Adaptive sampling only | ~100 mA | ✅ Implemented |
-| + Light sleep between samples | ~1.12 mA | ❌ Would break WiFi |
-| + Batch transmission + deep sleep | <0.5 mA | ❌ Future work |
-
-**Recommended production design:**
-1. Sample at adaptive rate for 5 seconds
-2. Store average in flash
-3. Repeat 12 times (1 minute of data)
-4. Wake WiFi, send all averages at once
-5. Deep sleep for 60 seconds
-
-This would achieve months of battery life on a 1000 mAh battery.
