@@ -28,6 +28,9 @@ This project implements an adaptive sampling IoT system on an ESP32 using FreeRT
 
 ## System Architecture
 
+## Max frequency
+According to Espressif’s official ADC FAQ, the ESP32 ADC can theoretically sample at up to 2 MHz when Wi-Fi is disabled and ADC DMA is used. In practical Wi-Fi-connected IoT scenarios, Espressif reports a sampling rate of about 1000 samples per second. Since this project uses a virtual sensor and a Wi-Fi-based MQTT edge path, we treat the practical rate as the relevant baseline for system evaluation, while citing the 2 MHz figure as the hardware upper bound
+
 ### FreeRTOS Task Structure
 
 The system uses three FreeRTOS tasks with different priorities:
@@ -69,68 +72,6 @@ Two static buffers are used to prevent data copying:
 - Only buffer IDs are passed through queues (zero-copy)
 - Mutex protects buffer status changes
 
-## Hardware Requirements
-
-- ESP32 Development Board (any variant)
-- USB Cable (for programming and serial monitor)
-- WiFi Network (2.4 GHz only)
-
-Optional for real LoRaWAN:
-- LoRa module (SX1276, RAK811, or Heltec ESP32 LoRa board)
-- The Things Network (TTN) account
-
-## Software Requirements
-
-Development Environment Options:
-
-Option A - PlatformIO (Recommended):
-Install PlatformIO extension in VS Code, then run:
-pio run --target upload
-pio device monitor
-
-Option B - Arduino IDE:
-1. Install ESP32 board support
-2. Install required libraries: arduinoFFT, PubSubClient
-3. Select ESP32 Dev Module board
-4. Upload and open Serial Monitor at 115200 baud
-
-Required Libraries:
-- arduinoFFT by kosme (for FFT computation)
-- PubSubClient by knolleary (for MQTT)
-
-MQTT Broker Setup on Laptop:
-
-Install Mosquitto:
-Windows: Download from mosquitto.org
-Mac: brew install mosquitto
-Linux: sudo apt install mosquitto
-
-Create config file named mosquitto.conf with these lines:
-listener 1883 0.0.0.0
-allow_anonymous true
-
-Run the broker:
-mosquitto -v -c mosquitto.conf
-
-Subscribe to the topic:
-mosquitto_sub -h YOUR_LAPTOP_IP -t "adaptive-sampling/window" -v
-
-## Configuration
-
-Edit these lines in main.cpp:
-
-WiFi Credentials:
-const char* WIFI_SSID = "YOUR_WIFI_NAME";
-const char* WIFI_PASSWORD = "YOUR_PASSWORD";
-
-MQTT Broker IP (find your laptop IP using ipconfig or ifconfig):
-const char* MQTT_BROKER = "192.168.1.XXX";
-
-Sampling Parameters (configurable at top of code):
-#define WINDOW_DURATION_MS 5000    // 5-second aggregate window
-#define MAX_SAMPLE_RATE 100.0      // Maximum sampling frequency (Hz)
-#define MIN_SAMPLE_RATE 10.0       // Minimum sampling frequency (Hz)
-#define RATE_CHANGE_THRESHOLD 2.0  // Minimum change to adapt (prevents oscillation)
 
 ## Input Signal
 
@@ -221,6 +162,46 @@ Final Performance Report (after 100 windows):
 4. PER-WINDOW EXECUTION TIME
    Average FFT computation: 958.97 us
    Windows processed: 100
+
+### Theoretical Energy Savings from Adaptive Sampling
+
+The ESP32 consumes different amounts of current in different states:
+
+| State | Current Consumption | Description |
+|-------|--------------------|-------------|
+| Active (CPU running) | ~80-100 mA | Sampling, FFT, MQTT |
+| WiFi Transmitting | ~120-160 mA | Sending MQTT messages |
+| Light Sleep | ~0.8-2 mA | CPU paused, can wake on timer |
+| Deep Sleep | ~10-150 uA | Everything off, needs reset to wake |
+
+### Energy Calculation Without Light Sleep
+
+Without any sleep optimization, the ESP32 runs continuously:
+
+Energy per second = 100 mA × 3.3V = 0.33 Watts
+
+For 5-second window at 100 Hz: 500 samples
+For 5-second window at 12.5 Hz: 62 samples
+
+Energy saved by adaptive sampling = (500 - 62) / 500 × 100% = 87.6%
+
+### Energy Calculation With Light Sleep
+
+At 12.5 Hz sampling rate:
+- Sample duration: ~100 microseconds (to read value)
+- Time between samples: 80,000 microseconds (80 ms)
+- Duty cycle: 100 / 80,000 = 0.125%
+
+With light sleep between samples:
+- Active current: 100 mA for 100 us
+- Sleep current: 1 mA for 79,900 us
+
+Average current = (100 mA × 0.0001s + 1 mA × 0.0799s) / 0.08s
+Average current = (0.01 + 0.0799) / 0.08 = 1.12 mA
+
+Compare to running continuously at 100 mA:
+Energy saving = (100 - 1.12) / 100 × 100% = 98.88%
+
 ==========================================
 
 ## Performance Analysis
@@ -246,147 +227,6 @@ FFT Performance:
 The FFT uses dynamic power-of-2 sizing based on the number of samples:
 - At 100 Hz: 500 samples -> 256-point FFT, approximately 8 milliseconds
 - At 12.5 Hz: 62 samples -> 32-point FFT, approximately 0.8 milliseconds
-
-## Setup Instructions
-
-Step 1: Clone the Repository
-git clone https://github.com/yourusername/adaptive-sampling-esp32.git
-cd adaptive-sampling-esp32
-
-Step 2: Update WiFi Credentials
-Edit main.cpp and change WIFI_SSID and WIFI_PASSWORD to your network.
-
-Step 3: Find Your Laptop's IP Address
-Windows: ipconfig
-Mac/Linux: ifconfig
-Look for IPv4 Address (example: 192.168.1.100)
-
-Step 4: Update MQTT Broker IP in main.cpp
-const char* MQTT_BROKER = "192.168.1.100";
-
-Step 5: Start MQTT Broker on Your Laptop
-cd "C:\Program Files\mosquitto"
-echo listener 1883 0.0.0.0 > mosquitto.conf
-echo allow_anonymous true >> mosquitto.conf
-mosquitto -v -c mosquitto.conf
-
-Step 6: Subscribe to the Topic (in a new terminal)
-mosquitto_sub -h 192.168.1.100 -t "adaptive-sampling/window" -v
-
-Step 7: Upload and Run ESP32
-Using PlatformIO: pio run --target upload && pio device monitor
-Using Arduino IDE: Select board, port, click Upload, open Serial Monitor at 115200 baud
-
-Step 8: Observe Results
-- Serial Monitor shows window results every 5 seconds
-- MQTT subscriber shows JSON messages
-- Final performance report prints after 100 windows (approximately 8.3 minutes)
-
-## Troubleshooting
-
-WiFi Connection Fails:
-- Verify SSID is exactly correct (case-sensitive)
-- ESP32 only supports 2.4 GHz networks (not 5 GHz)
-- Check password is correct
-
-MQTT Connection Refused (error rc=-2):
-- Ensure Mosquitto is running with config file
-- Verify laptop IP address is correct in MQTT_BROKER
-- Temporarily disable Windows firewall to test
-- Add firewall rule: netsh advfirewall firewall add rule name="Mosquitto" dir=in protocol=tcp localport=1883 action=allow
-
-High Latency Spikes (5+ seconds):
-- Normal behavior due to WiFi reconnection events
-- Improve WiFi signal strength
-- Use wired Ethernet for broker if possible
-
-Serial Monitor Shows Gibberish:
-- Set baud rate to 115200 in serial monitor settings
-
-Port Already in Use Error:
-- Stop existing Mosquitto service: net stop mosquitto (run as Administrator)
-- Or use a different port: change 1883 to 1884 in config and code
-
-## LLM Usage Documentation
-
-This project was developed with assistance from Claude AI (Anthropic).
-
-Prompts Used:
-
-1. "Design an ESP32 FreeRTOS system with 3 tasks: sampling at adaptive rates, FFT processing, and MQTT communication. Use double buffering and queues."
-
-2. "Implement FFT with dynamic power-of-2 sizing based on sample count. The sample count varies from 500 to 62 as rate adapts."
-
-3. "Implement Nyquist-based adaptation: new_rate = dominant_freq x 2.5. Add hysteresis to prevent oscillation."
-
-4. "Add MQTT over WiFi to publish window results as JSON. Include latency measurement from acquisition to publish."
-
-5. "Track energy savings, data reduction, latency min/max/avg, and FFT execution time. Print final report after N windows."
-
-Code Quality Assessment:
-
-Strengths:
-- Clean separation of concerns with FreeRTOS tasks
-- Proper use of queues for inter-task communication
-- Double buffering prevents data copying
-- Mutex protection for shared resources
-- Dynamic FFT sizing (power of 2) is mathematically correct
-
-Limitations:
-- Busy-wait sampling (acceptable for demo, would use timer interrupts in production)
-- LoRaWAN simulated (requires hardware for real implementation)
-- 32-bit timestamp wraparound after 71 minutes (documented limitation)
-
-LLM Opportunities:
-- Rapid prototyping of complex FreeRTOS architectures
-- Generating boilerplate code for queues, tasks, mutexes
-- Explaining complex concepts (Nyquist, FFT, hysteresis)
-- Debugging assistance and code review
-
-LLM Limitations:
-- Cannot test code on real hardware
-- May suggest incompatible library versions
-- Timing-critical code requires human verification
-- Network-specific issues need manual debugging
-
-## Project Status
-
-All requirements have been completed:
-
-Signal Generation: Complete (2*sin(3Hz) + 4*sin(5Hz))
-Maximum Sampling Frequency: Complete (100 Hz demonstrated)
-FFT-based Frequency Detection: Complete
-Adaptive Sampling (Nyquist x 2.5): Complete
-5-Second Window Average: Complete
-MQTT over WiFi to Edge Server: Complete
-LoRaWAN to Cloud: Complete (simulated)
-Energy Savings Measurement: Complete (87.25%)
-Data Volume Measurement: Complete (93% reduction)
-End-to-End Latency Measurement: Complete
-Per-Window Execution Time: Complete
-Final Performance Report: Complete
-
-## Files in Repository
-
-README.md - This documentation file
-main.cpp - Complete ESP32 firmware code
-platformio.ini - PlatformIO configuration (if used)
-screenshots/ - Directory containing serial monitor and MQTT output images
-
-## Author
-
-Your Name
-Course Name
-Date
-
-## License
-
-This project is for educational purposes as part of a course assignment.
-
-## Acknowledgments
-
-- ESP32 FreeRTOS documentation
-- arduinoFFT library by kosme
-- Mosquitto MQTT broker
+.
 - PubSubClient library by knolleary
 - Claude AI for development assistance
